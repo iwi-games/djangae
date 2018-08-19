@@ -2,6 +2,7 @@ from django.db import models
 from djangae.contrib import sleuth
 from djangae.test import TestCase, inconsistent_db
 from djangae.utils import get_next_available_port, retry, retry_on_error
+from django.utils.encoding import python_2_unicode_compatible
 from djangae.db.consistency import ensure_instance_consistent, ensure_instances_consistent
 from djangae.db.backends.appengine.context import CacheDict
 
@@ -19,13 +20,14 @@ class AvailablePortTests(TestCase):
             self.assertEquals(8095, get_next_available_port(url, port))
 
 
+@python_2_unicode_compatible
 class EnsureCreatedModel(models.Model):
     field1 = models.IntegerField()
 
     class Meta:
         app_label = "djangae"
 
-    def __unicode__(self):
+    def __str__(self):
         return u"PK: {}, field1 {}".format(self.pk, self.field1)
 
 
@@ -183,18 +185,18 @@ class RetryTestCase(TestCase):
         We test the retry_on_error decorator because it tests `retry` by proxy.
     """
 
-    def test_retries_param(self):
-        """ It should only retry a maximum of the number of times specified. """
+    def test_attempts_param(self):
+        """ It should only try a maximum of the number of times specified. """
 
-        @retry_on_error(_retries=2, _initial_wait=0, _catch=Exception)
+        @retry_on_error(_attempts=2, _initial_wait=0, _catch=Exception)
         def flakey():
             flakey.attempts += 1
             raise Exception("Oops")
 
         flakey.attempts = 0
 
-        self.assertRaises(Exception, flakey)  # Should fail eventually, after 2 retries
-        self.assertEqual(flakey.attempts, 3)  # 1st attempt + 2 retries
+        self.assertRaises(Exception, flakey)  # Should fail eventually, after 2 attempts
+        self.assertEqual(flakey.attempts, 2)
 
     def test_catch_param(self):
         """ It should only catch the exceptions given. """
@@ -210,15 +212,15 @@ class RetryTestCase(TestCase):
         self.assertEqual(flakey.attempts, 1)  # Only 1 attempt should have been made
         # With the correct _catch param, it should catch our exception
         flakey.attempts = 0  # reset
-        self.assertRaises(ValueError, retry_on_error(_catch=ValueError, _initial_wait=0, _retries=5)(flakey))
-        self.assertEqual(flakey.attempts, 6)  # Initial attempt + 5 retries
+        self.assertRaises(ValueError, retry_on_error(_catch=ValueError, _initial_wait=0, _attempts=5)(flakey))
+        self.assertEqual(flakey.attempts, 5)
 
     def test_initial_wait_param(self):
         """ The _initial_wait parameter should determine the backoff time for retries, which
             should be doubled for each subsequent retry.
         """
 
-        @retry_on_error(_initial_wait=5, _retries=2, _catch=Exception)
+        @retry_on_error(_initial_wait=5, _attempts=3, _catch=Exception)
         def flakey():
             raise Exception("Oops")
 
@@ -228,16 +230,16 @@ class RetryTestCase(TestCase):
             except Exception:
                 pass
 
-            self.assertEqual(len(sleep_watch.calls), 2)
-            self.assertEqual(sleep_watch.calls[0].args[0], 5 / 1000.0)
-            self.assertEqual(sleep_watch.calls[1].args[0], 10 / 1000.0)
+            self.assertEqual(len(sleep_watch.calls), 2)  # It doesn't sleep after the final attempt
+            self.assertEqual(sleep_watch.calls[0].args[0], 0.005) # initial wait in milliseconds
+            self.assertEqual(sleep_watch.calls[1].args[0], 0.01) # initial wait doubled during backoff
 
     def test_max_wait_param(self):
         """ The _max_wait parameter should limit the backoff time for retries, otherwise they will
             keep on doubling.
         """
 
-        @retry_on_error(_initial_wait=1, _max_wait=3, _retries=10, _catch=Exception)
+        @retry_on_error(_initial_wait=1, _max_wait=3, _attempts=10, _catch=Exception)
         def flakey():
             raise Exception("Oops")
 
@@ -248,9 +250,9 @@ class RetryTestCase(TestCase):
                 pass
 
             self.assertTrue(sleep_watch.called)
-            self.assertEqual(len(sleep_watch.calls), 10)
+            self.assertEqual(len(sleep_watch.calls), 9)  # It doesn't sleep after the final attempt
             sleep_times = [call.args[0] for call in sleep_watch.calls]
-            self.assertEqual(max(sleep_times), 3 / 1000.0)
+            self.assertEqual(max(sleep_times), 0.003)
 
     def test_args_and_kwargs_passed(self):
         """ Args and kwargs passed to `retry` or to the function decorated with `@retry_on_error`
