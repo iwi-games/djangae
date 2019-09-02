@@ -275,7 +275,10 @@ def _local(devappserver2=None, configuration=None, options=None, wsgi_request_in
     try:
         yield
     finally:
-        api_server.cleanup_stubs()
+        try:
+            api_server.cleanup_stubs()
+        except:
+            api_server.stub_util.cleanup_stubs()
         os.environ = original_environ
         stop_blobstore_service()
 
